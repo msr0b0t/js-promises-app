@@ -1,75 +1,70 @@
-const fs = require("fs");
+const { readFile, appendFile } = require("fs");
+const { promisify } = require("util");
 const mongoose = require("mongoose");
-const bluebird = require("bluebird");
-
-mongoose.connect("mongodb://localhost:27017/txt-data-db");
 
 const Data = require("./models/data");
 
+mongoose.connect("mongodb://localhost:27017/txt-data-db");
+
+// The promisify function from the (native) util package takes a function with the common (err, callback) signature
+// and returns a "promisified" version of it
+const readFileAsync = promisify(readFile);
+const appendFileAsync = promisify(appendFile);
+
 const filename = "./arxiv-test-data.txt";
 
-function readTxtFile(filePath) {
-	return new Promise((resolve, reject) => {
-		fs.readFile(filePath, "utf8", (err, data) => {
-			if (err) {
-				return reject(err);
-			}
-			return resolve(data);
-		});
-	});
+// Even though this function returns a promise whether we declare it async or not, it's a good practice to do so
+async function readTxtFile(filePath) {
+	return readFileAsync(filePath, "utf8");
 }
 
-function dataToArray(data, err) {
-	return new Promise((resolve, reject) => {
-		if (err) {
-			return reject(err);
-		}
-		const array = data.toString().split("\n");
-		return resolve(array);
-	});
+// This function doesn't perform any async operations, but because we declared it async, it will return a promise
+// with the results
+async function dataToArray(data) {
+	return data.toString().split("\n");
 }
 
-function saveItems(items) {
-	return bluebird.map(items, (item) => saveItem(item));
+// For whatever reason, in this function we want to suppress Data.create() failures
+async function saveItem(item) {
+	try {
+		const data = await Data.create(JSON.parse(item));
+		return data;
+	} catch (error) {
+		return undefined;
+	}
 }
 
-function saveItem(item) {
-	const parsedItem = JSON.parse(item);
-	return Data.create(parsedItem)
-		.catch(() => {});
+// This function returns a promise that resolves when/if all internal promises resolve
+async function saveItems(items) {
+	return Promise.all(items.map(saveItem));
 }
 
-function getItemsFromDB() {
+async function getItemsFromDB() {
 	const start = new Date();
-	return Data.find({ keywords: { $in: ["Differential Geometry"] } }).then((items) => {
-		console.log("Elapsed", new Date() - start);
-		return items;
-	});
+	const items = await Data.find({ keywords: { $in: ["Differential Geometry"] } }).exec();
+	console.log("Elapsed", new Date() - start);
+	return items;
 }
 
-function addSerialNumber(items) {
+async function addSerialNumber(items) {
 	let cnt = 0;
-	return bluebird.map(items, (item) => {
+	return Promise.all(items.map((item) => {
 		cnt += 1;
 		item.serialNumber = cnt;
 		return saveItemToFile(item);
-	});
+	}));
 }
 
-function saveItemToFile(item) {
-	return new Promise((resolve, reject) => {
-		item = JSON.stringify(item);
-		fs.appendFile("./new-file.txt", item, (err) => {
-			if (err) {
-				return reject(err);
-			}
-			return resolve("Ok");
-		});
-	});
+async function saveItemToFile(item) {
+	await appendFileAsync("./new-file.txt", JSON.stringify(item));
+	return "Ok";
 }
 
+// There is no need to use the pattern then((args) => func(args)), then(func) is equivalent
 readTxtFile(filename)
-	.then((data) => dataToArray(data))
-	.then((items) => saveItems(items))
-	.then(() => getItemsFromDB())
-	.then((items) => addSerialNumber(items));
+	.then(dataToArray)
+	.then(saveItems)
+	.then(getItemsFromDB)
+	.then(addSerialNumber)
+	// Even though this is at the end, it will catch promise rejections from any of the above function calls
+	.catch(console.error);
