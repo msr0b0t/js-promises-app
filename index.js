@@ -4,7 +4,18 @@ const mongoose = require("mongoose");
 
 const Data = require("./models/data");
 
-mongoose.connect("mongodb://localhost:27017/txt-data-db");
+const mongooseOptions = {
+	useNewUrlParser: true,
+	useCreateIndex: true,
+	useFindAndModify: false,
+	reconnectTries: 30,
+	reconnectInterval: 500,
+	poolSize: 100,
+	keepAlive: true,
+	keepAliveInitialDelay: 300000,
+	useUnifiedTopology: true,
+};
+mongoose.connect("mongodb://localhost:27017/txt-data-db", mongooseOptions).catch((error) => console.error(error.message));
 
 // The promisify function from the (native) util package takes a function with the common (err, callback) signature
 // and returns a "promisified" version of it
@@ -50,8 +61,7 @@ async function addSerialNumber(items) {
 	let cnt = 0;
 	return Promise.all(items.map((item) => {
 		cnt += 1;
-		item.serialNumber = cnt;
-		return saveItemToFile(item);
+		return saveItemToFile({ ...item, serialNumber: cnt });
 	}));
 }
 
@@ -66,5 +76,7 @@ readTxtFile(filename)
 	.then(saveItems)
 	.then(getItemsFromDB)
 	.then(addSerialNumber)
+	.then(mongoose.disconnect)
+	.then(() => process.exit(0))
 	// Even though this is at the end, it will catch promise rejections from any of the above function calls
 	.catch(console.error);
